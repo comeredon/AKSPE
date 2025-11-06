@@ -1,0 +1,119 @@
+# ArgoCD Helm Chart Values
+# Custom configuration for AKS deployment
+
+global:
+  domain: argocd.example.com  # Update with your domain
+
+server:
+  # Enable metrics
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+  
+  # Ingress configuration (optional - uncomment if using ingress)
+  # ingress:
+  #   enabled: true
+  #   ingressClassName: nginx
+  #   annotations:
+  #     cert-manager.io/cluster-issuer: letsencrypt-prod
+  #   hosts:
+  #     - argocd.example.com
+  #   tls:
+  #     - secretName: argocd-tls
+  #       hosts:
+  #         - argocd.example.com
+  
+  # RBAC Configuration
+  rbacConfig:
+    policy.default: role:readonly
+    policy.csv: |
+      p, role:namespace-admin, applications, *, */*, allow
+      p, role:namespace-admin, clusters, get, *, allow
+      p, role:namespace-admin, repositories, get, *, allow
+      g, namespace-admins, role:namespace-admin
+
+  # Repository credentials (managed via secret)
+  config:
+    repositories: |
+      - type: git
+        url: https://github.com/your-org/your-repo
+    
+    # Notification configuration
+    notifications.enabled: "true"
+    
+  # Additional configuration
+  additionalApplications:
+    - name: namespace-manager
+      namespace: argocd
+      project: default
+      source:
+        repoURL: https://github.com/your-org/your-repo
+        targetRevision: main
+        path: namespaces
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: argocd
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+
+# Redis HA for production
+redis-ha:
+  enabled: true
+  replicas: 3
+
+# Repository server configuration
+repoServer:
+  replicas: 2
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+
+# Application controller
+controller:
+  replicas: 1
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+
+# Dex (SSO) configuration - for Azure AD integration
+dex:
+  enabled: true
+  
+# Notifications controller
+notifications:
+  enabled: true
+  argocdUrl: https://argocd.example.com
+  
+  # Notification templates
+  templates:
+    template.namespace-created: |
+      message: |
+        Namespace {{.app.metadata.name}} has been created successfully.
+        Status: {{.app.status.operationState.phase}}
+        Sync Status: {{.app.status.sync.status}}
+    
+  # Notification triggers
+  triggers:
+    trigger.on-sync-succeeded: |
+      - when: app.status.operationState.phase in ['Succeeded']
+        send: [namespace-created]
+  
+  # Subscriptions (configure based on your needs)
+  subscriptions:
+    - recipients:
+        - slack:namespace-notifications
+      triggers:
+        - on-sync-succeeded
+        - on-sync-failed
+
+# ApplicationSet controller
+applicationSet:
+  enabled: true
+  replicas: 1

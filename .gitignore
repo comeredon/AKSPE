@@ -1,0 +1,110 @@
+# .gitignore for AKS + ArgoCD GitOps
+
+# Secrets and credentials
+*.key
+*.pem
+*.crt
+*.p12
+*.pfx
+secrets.yaml
+secret-*.yaml
+*-secret.yaml
+
+# Terraform files (if using Terraform)
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+terraform.tfvars
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Bicep compiled files
+*.json
+!package.json
+!tsconfig.json
+!.vscode/*.json
+
+# Azure CLI and configuration
+.azure/
+azure.env
+
+# Kubernetes
+*.kubeconfig
+kubeconfig*
+.kube/
+
+# Helm
+charts/*.tgz
+.helm/
+
+# IDE and editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+*.out
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Environment files
+.env
+.env.local
+.env.*.local
+*.local
+
+# Build outputs
+dist/
+build/
+out/
+
+# Node modules (if using Node.js tools)
+node_modules/
+package-lock.json
+yarn.lock
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+venv/
+ENV/
+
+# ArgoCD local cache
+.argocd/
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Backup files
+*.bak
+*.backup
+*~
+
+# Test outputs
+test-results/
+coverage/
+
+# Local development overrides
+local-*.yaml
+*-local.yaml
+dev-*.yaml

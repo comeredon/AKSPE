@@ -1,0 +1,152 @@
+name: Namespace Request - PR Automation
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'namespaces/**/*.yaml'
+      - 'namespaces/**/*.yml'
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  validate-namespace:
+    name: Validate Namespace Configuration
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Get changed files
+        id: changed-files
+        uses: tj-actions/changed-files@v41
+        with:
+          files: |
+            namespaces/**/*.yaml
+            namespaces/**/*.yml
+      
+      - name: Validate YAML syntax
+        if: steps.changed-files.outputs.any_changed == 'true'
+        run: |
+          echo "Validating YAML files..."
+          for file in ${{ steps.changed-files.outputs.all_changed_files }}; do
+            echo "Checking: $file"
+            # Install yq if not available
+            if ! command -v yq &> /dev/null; then
+              sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+              sudo chmod +x /usr/local/bin/yq
+            fi
+            yq eval '.' "$file" > /dev/null
+          done
+          echo "✅ All YAML files are valid"
+      
+      - name: Check namespace naming convention
+        if: steps.changed-files.outputs.any_changed == 'true'
+        run: |
+          echo "Checking namespace naming conventions..."
+          for file in ${{ steps.changed-files.outputs.all_changed_files }}; do
+            namespace_name=$(yq eval '.metadata.name' "$file" | grep -v '^---$' | head -1)
+            
+            # Check if namespace name matches pattern (lowercase, alphanumeric, hyphens)
+            if [[ ! "$namespace_name" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$ ]]; then
+              echo "❌ Invalid namespace name: $namespace_name"
+              echo "Namespace names must be lowercase alphanumeric with hyphens"
+              exit 1
+            fi
+            
+            # Check length (max 63 characters)
+            if [ ${#namespace_name} -gt 63 ]; then
+              echo "❌ Namespace name too long: $namespace_name (max 63 characters)"
+              exit 1
+            fi
+            
+            echo "✅ Namespace name valid: $namespace_name"
+          done
+      
+      - name: Validate required fields
+        if: steps.changed-files.outputs.any_changed == 'true'
+        run: |
+          echo "Validating required fields..."
+          for file in ${{ steps.changed-files.outputs.all_changed_files }}; do
+            # Check for required labels
+            if ! yq eval '.metadata.labels."managed-by"' "$file" | grep -q "argocd"; then
+              echo "❌ Missing required label: managed-by=argocd in $file"
+              exit 1
+            fi
+            
+            # Check for team label
+            if ! yq eval '.metadata.labels.team' "$file" | grep -qv "null"; then
+              echo "⚠️ Warning: Missing team label in $file"
+            fi
+            
+            echo "✅ Required fields present in $file"
+          done
+      
+      - name: Check for resource quotas
+        if: steps.changed-files.outputs.any_changed == 'true'
+        run: |
+          echo "Checking for ResourceQuota..."
+          for file in ${{ steps.changed-files.outputs.all_changed_files }}; do
+            if ! yq eval 'select(.kind == "ResourceQuota")' "$file" | grep -q "ResourceQuota"; then
+              echo "⚠️ Warning: No ResourceQuota defined in $file"
+            else
+              echo "✅ ResourceQuota found in $file"
+            fi
+          done
+      
+      - name: Comment PR with validation results
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const message = `## Namespace Validation Results
+            
+            ✅ **Validation Completed**
+            
+            ### Changed Files
+            ${{ steps.changed-files.outputs.all_changed_files }}
+            
+            ### Next Steps
+            1. Review the namespace configuration carefully
+            2. Ensure all required approvals are obtained
+            3. Once merged, ArgoCD will automatically create the namespace
+            4. Monitor the ArgoCD UI for sync status
+            
+            ### Important Notes
+            - Namespace creation typically takes 1-2 minutes
+            - You will receive a notification once the namespace is ready
+            - Check ArgoCD logs if any issues occur
+            `;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: message
+            });
+
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Run Kubesec scan
+        uses: controlplaneio/kubesec-action@v0.0.2
+        with:
+          input: namespaces/
+          format: json
+      
+      - name: Upload Kubesec results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: results.sarif

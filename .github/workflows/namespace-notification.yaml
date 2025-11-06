@@ -1,0 +1,151 @@
+name: Namespace Created - Notification
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'namespaces/**/*.yaml'
+      - 'namespaces/**/*.yml'
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  notify-creation:
+    name: Notify Namespace Creation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      
+      - name: Get changed namespace files
+        id: changed-files
+        uses: tj-actions/changed-files@v41
+        with:
+          files: |
+            namespaces/**/*.yaml
+            namespaces/**/*.yml
+      
+      - name: Extract namespace information
+        if: steps.changed-files.outputs.any_changed == 'true'
+        id: namespace-info
+        run: |
+          # Install yq if not available
+          if ! command -v yq &> /dev/null; then
+            sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+            sudo chmod +x /usr/local/bin/yq
+          fi
+          
+          namespaces=""
+          for file in ${{ steps.changed-files.outputs.all_changed_files }}; do
+            namespace_name=$(yq eval '.metadata.name' "$file" | grep -v '^---$' | head -1)
+            team=$(yq eval '.metadata.labels.team' "$file" | grep -v '^---$' | head -1)
+            description=$(yq eval '.metadata.annotations.description' "$file" | grep -v '^---$' | head -1)
+            
+            namespaces="${namespaces}**Namespace:** \`${namespace_name}\`\n**Team:** ${team}\n**Description:** ${description}\n\n"
+          done
+          
+          echo "namespaces<<EOF" >> $GITHUB_OUTPUT
+          echo -e "$namespaces" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+      
+      - name: Wait for ArgoCD sync
+        if: steps.changed-files.outputs.any_changed == 'true'
+        run: |
+          echo "Waiting 30 seconds for ArgoCD to sync..."
+          sleep 30
+      
+      - name: Create notification issue
+        if: steps.changed-files.outputs.any_changed == 'true'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const namespaceInfo = `${{ steps.namespace-info.outputs.namespaces }}`;
+            
+            const issueBody = `## 🎉 Namespace(s) Created Successfully
+            
+            The following namespace(s) have been merged and are being provisioned by ArgoCD:
+            
+            ${namespaceInfo}
+            
+            ### Status
+            - ✅ PR Merged to main branch
+            - 🔄 ArgoCD is syncing the configuration
+            - ⏳ Expected completion: 1-2 minutes
+            
+            ### Next Steps
+            1. **Verify in ArgoCD UI**: Check the sync status at your ArgoCD dashboard
+            2. **Verify in Kubernetes**: Run \`kubectl get namespace <namespace-name>\`
+            3. **Check Resources**: Verify ResourceQuota and LimitRange are applied
+            4. **Deploy Applications**: You can now deploy applications to the namespace
+            
+            ### Useful Commands
+            \`\`\`bash
+            # Check namespace status
+            kubectl get namespace <namespace-name> -o yaml
+            
+            # Check resource quotas
+            kubectl get resourcequota -n <namespace-name>
+            
+            # Check limit ranges
+            kubectl get limitrange -n <namespace-name>
+            
+            # Check network policies
+            kubectl get networkpolicy -n <namespace-name>
+            \`\`\`
+            
+            ### ArgoCD Dashboard
+            Monitor the sync status: [ArgoCD Applications](https://your-argocd-url/applications)
+            
+            ### Support
+            If you encounter any issues, please:
+            - Check ArgoCD application logs
+            - Review the namespace YAML file for errors
+            - Contact the platform team
+            
+            ---
+            *This namespace was created via GitOps using ArgoCD*
+            *Commit: ${context.sha}*
+            `;
+            
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `✅ Namespace Created - ${new Date().toISOString().split('T')[0]}`,
+              body: issueBody,
+              labels: ['namespace', 'argocd', 'automated']
+            });
+      
+      - name: Send Slack notification (optional)
+        if: steps.changed-files.outputs.any_changed == 'true' && env.SLACK_WEBHOOK_URL != ''
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          namespaces="${{ steps.namespace-info.outputs.namespaces }}"
+          
+          curl -X POST "$SLACK_WEBHOOK_URL" \
+            -H 'Content-Type: application/json' \
+            -d '{
+              "text": "🎉 New Namespace Created",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*New Namespace Created via GitOps*\n'"$namespaces"'"
+                  }
+                },
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "Check ArgoCD for sync status"
+                  }
+                }
+              ]
+            }'
