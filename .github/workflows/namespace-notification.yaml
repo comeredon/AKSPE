@@ -65,7 +65,7 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const namespaceInfo = `${{ steps.namespace-info.outputs.namespaces }}`;
+            const namespaceInfo = process.env.NAMESPACE_INFO;
             
             const issueBody = `## 🎉 Namespace(s) Created Successfully
             
@@ -120,6 +120,8 @@ jobs:
               body: issueBody,
               labels: ['namespace', 'argocd', 'automated']
             });
+        env:
+          NAMESPACE_INFO: ${{ steps.namespace-info.outputs.namespaces }}
       
       - name: Send Slack notification (optional)
         if: steps.changed-files.outputs.any_changed == 'true' && env.SLACK_WEBHOOK_URL != ''
