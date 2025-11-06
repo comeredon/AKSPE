@@ -13,7 +13,7 @@ param dnsPrefix string = 'aks-argocd'
 param enableAzureRBAC bool = true
 
 @description('Kubernetes version')
-param kubernetesVersion string = '1.28.3'
+param kubernetesVersion string = '1.30'
 
 @description('Tags to apply to resources')
 param tags object = {
@@ -22,65 +22,53 @@ param tags object = {
   project: 'GitOps'
 }
 
-// Deploy AKS cluster using Azure Verified Module
-module aksCluster 'br/public:avm/res/container-service/managed-cluster:0.5.0' = {
-  name: 'aksClusterDeployment'
-  params: {
-    name: clusterName
-    location: location
+// Deploy AKS cluster directly
+resource aksCluster 'Microsoft.ContainerService/managedClusters@2024-02-01' = {
+  name: clusterName
+  location: location
+  tags: tags
+  identity: {
+    type: 'SystemAssigned'
+  }
+  properties: {
     dnsPrefix: dnsPrefix
     kubernetesVersion: kubernetesVersion
+    enableRBAC: true
+    disableLocalAccounts: true
     
-    // Enable system-assigned managed identity
-    managedIdentities: {
-      systemAssigned: true
-    }
-    
-    // Enable Azure AD integration with RBAC
     aadProfile: {
-      aadProfileManaged: true
-      aadProfileEnableAzureRBAC: enableAzureRBAC
+      managed: true
+      enableAzureRBAC: enableAzureRBAC
     }
     
-    // Primary agent pool configuration
-    primaryAgentPoolProfiles: [
+    agentPoolProfiles: [
       {
         name: 'systempool'
         count: 3
         vmSize: 'Standard_D4s_v3'
         mode: 'System'
         osType: 'Linux'
-        type: 'VirtualMachineScaleSets'
         enableAutoScaling: true
         minCount: 3
         maxCount: 5
         maxPods: 110
         osDiskSizeGB: 128
-        osDiskType: 'Managed'
+        type: 'VirtualMachineScaleSets'
       }
     ]
     
-    // Network configuration
-    networkPlugin: 'azure'
-    networkPolicy: 'azure'
-    enableRBAC: true
-    
-    // Security features
-    disableLocalAccounts: true
-    enableAzureDefender: true
-    
-    // Monitoring
-    omsAgentEnabled: true
-    enableContainerInsights: true
-    
-    // Tags
-    tags: tags
+    networkProfile: {
+      networkPlugin: 'azure'
+      networkPolicy: 'azure'
+      serviceCidr: '10.0.0.0/16'
+      dnsServiceIP: '10.0.0.10'
+    }
   }
 }
 
 // Outputs
-output clusterName string = aksCluster.outputs.name
-output clusterResourceId string = aksCluster.outputs.resourceId
-output kubeletIdentityObjectId string = aksCluster.outputs.kubeletIdentityObjectId
-output controlPlaneFQDN string = aksCluster.outputs.controlPlaneFQDN
+output clusterName string = aksCluster.name
+output clusterResourceId string = aksCluster.id
+output kubeletIdentityObjectId string = aksCluster.properties.identityProfile.kubeletidentity.objectId
+output controlPlaneFQDN string = aksCluster.properties.fqdn
 output resourceGroupName string = resourceGroup().name
